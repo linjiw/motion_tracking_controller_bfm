@@ -194,12 +194,6 @@ def generate_launch_description():
         output='screen',
     )
 
-    teleop = PathJoinSubstitution([
-        FindPackageShare('unitree_bringup'),
-        'launch',
-        'teleop.launch.py'
-    ])
-
     return LaunchDescription([
         DeclareLaunchArgument('robot_type', default_value='g1'),
         DeclareLaunchArgument('network_interface'),
@@ -223,7 +217,23 @@ def generate_launch_description():
         control_node,
         node_robot_state_publisher,
         rosbag2,
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(teleop)
+        Node(
+            package='joy_linux',
+            executable='joy_linux_node',
+            output='both'
+        ),
+        Node(
+            package='joy_teleop',
+            executable='joy_teleop',
+            parameters=[
+                PathJoinSubstitution([
+                    FindPackageShare('motion_tracking_controller'),
+                    'config',
+                    'teleop',
+                    LaunchConfiguration('robot_type'),
+                    'joy.yaml'
+                ])
+            ],
+            output='both'
         )
     ])
