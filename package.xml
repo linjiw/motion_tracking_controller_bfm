@@ -11,6 +11,8 @@
     <build_depend>ament_cmake_auto</build_depend>
 
     <depend>legged_rl_controllers</depend>
+    <depend>jsoncpp</depend>
+    <depend>zlib</depend>
     <depend>rosbag2-storage-mcap</depend>
 
     <export>

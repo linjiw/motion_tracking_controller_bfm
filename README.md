@@ -93,6 +93,85 @@ ros2 launch motion_tracking_controller mujoco.launch.py wandb_path:=<your_wandb_
 ros2 launch motion_tracking_controller mujoco.launch.py policy_path:=<your_onnx_file_path>
 ```
 
+### Behavior Foundation (BFM) Residual Mode
+
+BFM exports ship as a residual + base pair plus metadata (see `src/speed_controller/onnx-understanding.md`). The motion controller now supports these artefacts behind an opt-in switch:
+
+1. Provide the bundle paths (absolute is safest):
+
+```bash
+ros2 launch motion_tracking_controller mujoco.launch.py \
+  policy.mode:=bfm \
+  policy.bfm.residual_path:=/abs/path/speed_iter.onnx \
+  policy.bfm.base_path:=/abs/path/speed_bfm_base.onnx \
+  policy.bfm.metadata_path:=/abs/path/deploy_meta.json \
+  policy.bfm.obs_norm_path:=/abs/path/deploy_obs_norm.npz \
+  command.topic:=/cmd_vel \
+  enable_teleop:=false \
+  policy.bfm.debug_dump:=true   # optional: log slice stats for first few ticks
+
+# override `command.topic` if your teleop publishes elsewhere. Set `enable_teleop:=true` only when a joystick is present.
+```
+
+2. Ensure the controller’s YAML lists the single observation term expected by the residual graph (the launch file will inject this automatically when `policy.mode:=bfm`, but it is useful to know what the controller expects):
+
+```yaml
+observation_names:
+  - behavior_residual_obs
+command_names:
+  - speed
+```
+
+If you do not have a joystick, either rely on the built-in `policy.bfm.default_forward_speed` (default 1.4 m/s along +X) or publish a constant command to `/cmd_vel`:
+
+```bash
+ros2 topic pub /cmd_vel geometry_msgs/msg/TwistStamped "
+header:
+  stamp: {sec: 0, nanosec: 0}
+  frame_id: base
+twist:
+  linear:  {x: 0.4, y: 0.0, z: 0.0}
+  angular: {x: 0.0, y: 0.0, z: 0.0}
+" --rate 20
+```
+
+3. Optional: override the residual warmup gate (`policy.bfm.grace_override`). Leave it at `-1` to use the metadata value.
+
+Behind the scenes the same velocity-topic command term is reused, so teleop + launch files do not change apart from the parameters above.
+
+### Validation / Test Workflow
+
+To reproduce the training host before running the ROS controller, follow the same two-stage procedure we use internally:
+
+1. **Python parity check (Isaac-style host)**  
+   Use the existing evaluation script (can run anywhere inside the workspace):
+   ```bash
+   python3 src/speed_controller/eval_downstream_onnx.py \
+     --residual_path /abs/path/speed_iter.onnx \
+     --base_path /abs/path/speed_bfm_base.onnx \
+     --metadata_path /abs/path/deploy_meta.json \
+     --obs_norm_path /abs/path/deploy_obs_norm.npz \
+     --num_envs 1 --debug_interval 100
+   ```
+   This prints slice-level stats (`base_obs`, `sp_real`, `sg_real_masked`, etc.). Save the console output; it becomes your reference when checking the ROS logs.
+
+2. **ROS controller in MuJoCo**  
+   Launch the motion controller with `policy.mode:=bfm` as shown above. Enable debug logs once to compare statistics:
+   ```bash
+   ROS_LOG_LEVEL=INFO ros2 launch motion_tracking_controller mujoco.launch.py \
+     policy.mode:=bfm \
+     policy.bfm.residual_path:=... \
+     policy.bfm.base_path:=... \
+     policy.bfm.metadata_path:=... \
+     policy.bfm.obs_norm_path:=... \
+     > /tmp/bfm_ros.log
+   ```
+   The BehaviorFoundationPolicy logs the active mode, action/observation dims, alpha/mode, and per-slice min/max for the first few ticks. Diff these numbers against the Python run—if they agree within small tolerances, you can proceed to longer MuJoCo episodes or real-robot trials.
+
+3. **(Optional) Grace/command verification**  
+   Set `policy.bfm.grace_override:=0` to confirm residual actions are live immediately, then revert to the metadata value for deployment. Watching `/motion_tracking_controller/command` telemetry or the `/tmp/bfm_ros.log` residual norms helps confirm the gate is working.
+   If your teleop publishes on a custom topic, pass `command.topic:=/my_vel_topic` in the launch invocation so the `VelocityTopicCommandTerm` subscribes correctly.
+
 ### Real Experiments
 
 > ⚠️ **Disclaimer**  
@@ -140,4 +219,3 @@ Below is an overview of the code structure for this repository:
     - Includes launch files like `mujoco.launch.py` and `real.launch.py` for simulation and real robot execution.
 - **`config`**
     - Stores configuration files for standby controller and state estimation params.
-

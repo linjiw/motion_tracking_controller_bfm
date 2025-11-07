@@ -83,9 +83,36 @@ def setup_controllers(context):
     policy_path_value = LaunchConfiguration('policy_path').perform(context)
     start_step_value = LaunchConfiguration('start_step').perform(context)
     ext_pos_corr = LaunchConfiguration('ext_pos_corr').perform(context)
+    policy_mode_value = LaunchConfiguration('policy.mode').perform(context)
+    bfm_residual_value = LaunchConfiguration('policy.bfm.residual_path').perform(context)
+    bfm_base_value = LaunchConfiguration('policy.bfm.base_path').perform(context)
+    bfm_metadata_value = LaunchConfiguration('policy.bfm.metadata_path').perform(context)
+    bfm_obs_norm_value = LaunchConfiguration('policy.bfm.obs_norm_path').perform(context)
+    bfm_grace_override_value = LaunchConfiguration('policy.bfm.grace_override').perform(context)
 
     kv_pairs = []
-    if policy_path_value:
+    if policy_mode_value:
+        kv_pairs.append(('walking_controller.policy.mode', policy_mode_value))
+
+    if policy_mode_value == 'bfm':
+        def make_abs(path):
+            if not path:
+                return ""
+            return os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
+
+        if bfm_residual_value:
+            kv_pairs.append(('walking_controller.policy.bfm.residual_path', make_abs(bfm_residual_value)))
+        if bfm_base_value:
+            kv_pairs.append(('walking_controller.policy.bfm.base_path', make_abs(bfm_base_value)))
+        if bfm_metadata_value:
+            kv_pairs.append(('walking_controller.policy.bfm.metadata_path', make_abs(bfm_metadata_value)))
+        if bfm_obs_norm_value:
+            kv_pairs.append(('walking_controller.policy.bfm.obs_norm_path', make_abs(bfm_obs_norm_value)))
+        if bfm_grace_override_value:
+            kv_pairs.append(('walking_controller.policy.bfm.grace_override', int(bfm_grace_override_value)))
+        kv_pairs.append(('walking_controller.command_names', "[speed]"))
+        kv_pairs.append(('walking_controller.observation_names', "[behavior_residual_obs]"))
+    elif policy_path_value:
         abs_path = os.path.abspath(os.path.expanduser(os.path.expandvars(policy_path_value)))
         kv_pairs.append(('walking_controller.policy.path', abs_path))
     if start_step_value:
@@ -162,7 +189,13 @@ def generate_launch_description():
             "wandb_path": LaunchConfiguration("wandb_path")
         }.items(),
         condition=IfCondition(
-            PythonExpression(["'", LaunchConfiguration('policy_path'), "' == ''"])
+            PythonExpression([
+                "'",
+                LaunchConfiguration('policy_path'),
+                "' == '' and '",
+                LaunchConfiguration('policy.mode'),
+                "' != 'bfm'"
+            ])
         )
     )
 
@@ -176,6 +209,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument('robot_type', default_value='g1'),
+        DeclareLaunchArgument('wandb_path', default_value=''),
         DeclareLaunchArgument(
             'policy_path',
             default_value='',
@@ -191,9 +225,23 @@ def generate_launch_description():
             default_value='false',
             description='Enable external position correction'
         ),
+        DeclareLaunchArgument(
+            'enable_teleop',
+            default_value='false',
+            description='Launch unitree_bringup teleop/joy stack (set true if joystick connected)'
+        ),
+        DeclareLaunchArgument('policy.mode', default_value='legacy'),
+        DeclareLaunchArgument('policy.bfm.residual_path', default_value=''),
+        DeclareLaunchArgument('policy.bfm.base_path', default_value=''),
+        DeclareLaunchArgument('policy.bfm.metadata_path', default_value=''),
+        DeclareLaunchArgument('policy.bfm.obs_norm_path', default_value=''),
+        DeclareLaunchArgument('policy.bfm.grace_override', default_value='-1'),
         wandb,
         controllers_opaque_func,
         mujoco_simulator,
         node_robot_state_publisher,
-        IncludeLaunchDescription(PythonLaunchDescriptionSource(teleop))
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(teleop),
+            condition=IfCondition(LaunchConfiguration('enable_teleop'))
+        )
     ])

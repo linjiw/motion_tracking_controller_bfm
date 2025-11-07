@@ -1,7 +1,9 @@
 #pragma once
 
+#include <legged_rl_controllers/CommandManager.h>
 #include <legged_rl_controllers/RlController.h>
 
+#include "motion_tracking_controller/bfm_support/BehaviorFoundationPolicy.h"
 #include "motion_tracking_controller/MotionCommand.h"
 #include "motion_tracking_controller/common.h"
 
@@ -22,6 +24,10 @@ class MotionTrackingController : public RlController {
 
   MotionCommandCfg cfg_;
   MotionCommandTerm::SharedPtr commandTerm_;
+  bool bfmMode_{false};
+  int bfmGraceOverride_{-1};
+  bfm::BehaviorFoundationPolicy::SharedPtr bfmPolicy_;
+  std::string commandTopic_{"/cmd_vel"};
 };
 
 }  // namespace legged

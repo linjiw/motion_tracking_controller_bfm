@@ -8,6 +8,7 @@ ament_auto_find_build_dependencies()
 
 
 find_package(Eigen3 REQUIRED)
+find_package(ZLIB REQUIRED)
 
 ament_auto_add_library(
     ${PROJECT_NAME}
@@ -22,7 +23,8 @@ pluginlib_export_plugin_description_file(controller_interface motion_tracking_co
 target_include_directories(
     ${PROJECT_NAME} PUBLIC ${EIGEN3_INCLUDE_DIRS})
 
-target_link_libraries(${PROJECT_NAME} Eigen3::Eigen)
+target_link_libraries(${PROJECT_NAME} Eigen3::Eigen jsoncpp_lib ZLIB::ZLIB)
+ament_target_dependencies(${PROJECT_NAME} jsoncpp)
 
 ament_auto_package(
     INSTALL_TO_SHARE config launch
