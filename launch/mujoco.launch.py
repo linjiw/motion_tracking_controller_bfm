@@ -169,20 +169,6 @@ def generate_launch_description():
         }],
     )
 
-    mujoco_simulator = Node(
-        package='mujoco_sim_ros2',
-        executable='mujoco_sim',
-        parameters=[
-            {"model_package": "unitree_description",
-             "model_file": PythonExpression(["'/mjcf/", robot_type, ".xml'"]),
-             "physics_plugins": ["mujoco_ros2_control::MujocoRos2ControlPlugin"],
-             "use_sim_time": True
-             },
-            robot_description,
-            LaunchConfiguration('controllers_yaml'),
-        ],
-        output='screen')
-
     wandb = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([ThisLaunchFileDir(), "/wandb.launch.py"]),
         launch_arguments={
@@ -236,9 +222,27 @@ def generate_launch_description():
         DeclareLaunchArgument('policy.bfm.metadata_path', default_value=''),
         DeclareLaunchArgument('policy.bfm.obs_norm_path', default_value=''),
         DeclareLaunchArgument('policy.bfm.grace_override', default_value='-1'),
+        DeclareLaunchArgument(
+            'mujoco_debug_prefix',
+            default_value='',
+            description='Optional launch prefix (e.g. "gdb -ex run -ex bt --args") applied to mujoco_sim'
+        ),
         wandb,
         controllers_opaque_func,
-        mujoco_simulator,
+        Node(
+            package='mujoco_sim_ros2',
+            executable='mujoco_sim',
+            parameters=[
+                {"model_package": "unitree_description",
+                 "model_file": PythonExpression(["'/mjcf/", robot_type, ".xml'"]),
+                 "physics_plugins": ["mujoco_ros2_control::MujocoRos2ControlPlugin"],
+                 "use_sim_time": True
+                 },
+                robot_description,
+                LaunchConfiguration('controllers_yaml'),
+            ],
+            prefix=LaunchConfiguration('mujoco_debug_prefix'),
+            output='screen'),
         node_robot_state_publisher,
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(teleop),

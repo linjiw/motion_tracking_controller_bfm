@@ -104,6 +104,9 @@ class BehaviorFoundationPolicy : public Policy {
                                           const Eigen::Vector3f& gravity,
                                           const Eigen::VectorXf& joints,
                                           const Eigen::VectorXf& joint_vel) const;
+  void loadOnnxMetadata();
+  static std::vector<double> parseCsvDoubles(const std::string& csv);
+  static std::vector<std::string> parseCsvStrings(const std::string& csv);
 
   BfmPaths paths_;
   std::string provider_;
@@ -145,6 +148,7 @@ class BehaviorFoundationPolicy : public Policy {
   double default_forward_speed_{1.4};
   bool debug_dump_{false};
   int debug_counter_{0};
+  int diagnostic_counter_{0};
 
   int64_t time_step_counter_{0};
 };

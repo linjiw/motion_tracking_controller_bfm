@@ -91,13 +91,32 @@ std::vector<ZipEntry> parse_central_directory(const std::vector<uint8_t>& buffer
   return entries;
 }
 
-ZipEntry find_entry(const std::vector<ZipEntry>& entries, const std::string& target) {
+const ZipEntry* try_find_entry(const std::vector<ZipEntry>& entries, const std::string& target) {
   for (const auto& entry : entries) {
     if (entry.name == target) {
-      return entry;
+      return &entry;
     }
   }
-  throw std::runtime_error("Array \"" + target + "\" not found in NPZ archive.");
+  return nullptr;
+}
+
+ZipEntry find_entry(const std::vector<ZipEntry>& entries, const std::string& target) {
+  if (const ZipEntry* exact = try_find_entry(entries, target)) {
+    return *exact;
+  }
+  if (!target.empty() && target.rfind(".npy") == std::string::npos) {
+    if (const ZipEntry* npy_entry = try_find_entry(entries, target + ".npy")) {
+      return *npy_entry;
+    }
+  }
+  std::ostringstream available;
+  for (size_t i = 0; i < entries.size(); ++i) {
+    available << entries[i].name;
+    if (i + 1 < entries.size()) {
+      available << ", ";
+    }
+  }
+  throw std::runtime_error("Array \"" + target + "\" not found in NPZ archive. Available entries: " + available.str());
 }
 
 std::vector<uint8_t> extract_entry(const std::vector<uint8_t>& buffer, const ZipEntry& entry) {
@@ -168,9 +187,13 @@ NpyHeader parse_npy_header(const std::vector<uint8_t>& buffer) {
     throw std::runtime_error("NPY header missing descr/shape.");
   }
 
-  const size_t descr_start = header.find('\'', descr_pos + 6);
+  const size_t descr_delim = header.find(':', descr_pos);
+  if (descr_delim == std::string::npos) {
+    throw std::runtime_error("Failed to locate dtype delimiter in NPY header.");
+  }
+  const size_t descr_start = header.find('\'', descr_delim);
   const size_t descr_end = header.find('\'', descr_start + 1);
-  if (descr_start == std::string::npos || descr_end == std::string::npos) {
+  if (descr_start == std::string::npos || descr_end == std::string::npos || descr_end <= descr_start + 1) {
     throw std::runtime_error("Failed to parse NPY dtype.");
   }
   const std::string dtype = header.substr(descr_start + 1, descr_end - descr_start - 1);

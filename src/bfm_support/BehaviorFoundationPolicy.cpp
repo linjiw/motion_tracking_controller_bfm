@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <sstream>
 
 #include <rclcpp/logging.hpp>
 
@@ -22,6 +23,16 @@ void sanitizeVector(Eigen::VectorXf& vec,
     }
   }
 }
+
+std::string vectorStats(const char* label, const Eigen::VectorXf& vec) {
+  std::ostringstream oss;
+  if (vec.size() == 0) {
+    oss << label << ": empty";
+    return oss.str();
+  }
+  oss << label << ": min=" << vec.minCoeff() << " max=" << vec.maxCoeff() << " mean=" << vec.mean();
+  return oss.str();
+}
 }  // namespace
 
 namespace legged::bfm {
@@ -30,11 +41,32 @@ BehaviorFoundationPolicy::BehaviorFoundationPolicy(BfmPaths paths, std::string p
     : paths_(std::move(paths)), provider_(std::move(provider)) {}
 
 void BehaviorFoundationPolicy::init() {
+  auto logger = rclcpp::get_logger("BehaviorFoundationPolicy");
   metadata_ = loadMetadata(paths_.metadata);
+  RCLCPP_INFO(logger,
+              "[bfm] metadata loaded (action_dim=%d, residual_dim=%d, obs_dim=%d, goal_dim=%d, history_len=%d, slices=%zu)",
+              metadata_.action_dim,
+              metadata_.residual_dim,
+              metadata_.dim_obs,
+              metadata_.dim_goal,
+              metadata_.history.history_length,
+              metadata_.component_slices.size());
   try {
     loadObservationStats(paths_.obs_norm, metadata_);
+    if (paths_.obs_norm.empty()) {
+      RCLCPP_INFO(logger, "[bfm] no obs_norm_path provided; running without host-side normalization");
+    } else if (!metadata_.obs_mean.empty() && !metadata_.obs_var.empty()) {
+      RCLCPP_INFO(logger,
+                  "[bfm] loaded observation stats from '%s' (%zu entries)",
+                  paths_.obs_norm.c_str(),
+                  metadata_.obs_mean.size());
+    } else {
+      RCLCPP_WARN(logger,
+                  "[bfm] obs_norm_path '%s' did not provide mean/var tensors; normalization disabled",
+                  paths_.obs_norm.c_str());
+    }
   } catch (const std::exception& e) {
-    RCLCPP_WARN(rclcpp::get_logger("BehaviorFoundationPolicy"), "Failed to load observation stats: %s", e.what());
+    RCLCPP_WARN(logger, "Failed to load observation stats from '%s': %s", paths_.obs_norm.c_str(), e.what());
   }
 
   configureGoalLayout();
@@ -71,6 +103,14 @@ void BehaviorFoundationPolicy::init() {
   session_options_.SetIntraOpNumThreads(1);
 
   initSessions();
+  loadOnnxMetadata();
+  RCLCPP_INFO(logger,
+              "[bfm] sessions ready (residual inputs=%zu outputs=%zu, base inputs=%zu outputs=%zu, provider=%s)",
+              residual_input_names_.size(),
+              residual_output_names_.size(),
+              base_input_names_.size(),
+              base_output_names_.size(),
+              provider_.c_str());
 }
 
 void BehaviorFoundationPolicy::reset() {
@@ -84,9 +124,9 @@ void BehaviorFoundationPolicy::reset() {
 }
 
 vector_t BehaviorFoundationPolicy::prepareObservation() {
+  auto logger = rclcpp::get_logger("BehaviorFoundationPolicy");
   if (!model_) {
-    RCLCPP_WARN(rclcpp::get_logger("BehaviorFoundationPolicy"),
-                "LeggedModel not set; returning zero observation.");
+    RCLCPP_WARN(logger, "LeggedModel not set; returning zero observation.");
     cache_ready_ = false;
     return vector_t::Zero(getObservationSize());
   }
@@ -95,7 +135,7 @@ vector_t BehaviorFoundationPolicy::prepareObservation() {
   const vector_t& v = model_->getGeneralizedVelocity();
   if (q.size() < static_cast<Eigen::Index>(metadata_.action_dim) ||
       v.size() < static_cast<Eigen::Index>(metadata_.action_dim + 6)) {
-    RCLCPP_ERROR(rclcpp::get_logger("BehaviorFoundationPolicy"),
+    RCLCPP_ERROR(logger,
                  "State dimension mismatch (q=%ld, v=%ld, expected >= %d).",
                  q.size(),
                  v.size(),
@@ -160,6 +200,11 @@ vector_t BehaviorFoundationPolicy::prepareObservation() {
   Eigen::VectorXf sp_real = history_.push(features, lastActionFloat);
 
   vector_t cmd = command_manager_ ? command_manager_->getValue() : vector_t();
+  if (!command_manager_) {
+    RCLCPP_WARN_ONCE(logger,
+                     "[bfm] Command manager not set; defaulting to forward speed %.2f m/s",
+                     default_forward_speed_);
+  }
   double cmdX = cmd.size() > 0 ? cmd[0] : 0.0;
   double cmdY = cmd.size() > 1 ? cmd[1] : 0.0;
   double cmdYaw = cmd.size() > 2 ? cmd[2] : 0.0;
@@ -167,6 +212,9 @@ vector_t BehaviorFoundationPolicy::prepareObservation() {
   if (speed_mag < 1e-4) {
     cmdX = default_forward_speed_;
     cmdY = 0.0;
+    RCLCPP_INFO_ONCE(logger,
+                     "[bfm] Received zero Twist command; injecting default forward speed %.2f m/s",
+                     default_forward_speed_);
   }
   const Eigen::Vector3d commandWorld(cmdX, cmdY, 0.0);
   const Eigen::Quaterniond baseQuat = model_->getBaseRotation();
@@ -239,15 +287,13 @@ vector_t BehaviorFoundationPolicy::prepareObservation() {
   try {
     observation = assembler_->assemble(components);
   } catch (const std::exception& e) {
-    RCLCPP_ERROR(rclcpp::get_logger("BehaviorFoundationPolicy"),
-                 "Failed to assemble residual observation: %s",
-                 e.what());
+    RCLCPP_ERROR(logger, "Failed to assemble residual observation: %s", e.what());
     cache_ready_ = false;
     return vector_t::Zero(getObservationSize());
   }
 
   if (observation.size() != metadata_.dim_obs || !observation.allFinite()) {
-    RCLCPP_ERROR(rclcpp::get_logger("BehaviorFoundationPolicy"),
+    RCLCPP_ERROR(logger,
                  "Residual observation invalid (size=%ld, expected=%d, finite=%d). Zeroing vector.",
                  static_cast<long>(observation.size()),
                  metadata_.dim_obs,
@@ -256,7 +302,7 @@ vector_t BehaviorFoundationPolicy::prepareObservation() {
   }
 
   if (debug_dump_ && debug_counter_ < 5) {
-    RCLCPP_INFO(rclcpp::get_logger("BehaviorFoundationPolicy"),
+    RCLCPP_INFO(logger,
                 "[debug] observation snapshot %d: min=%.5f max=%.5f mean=%.5f",
                 debug_counter_,
                 observation.minCoeff(),
@@ -350,6 +396,7 @@ BehaviorFoundationPolicy::StepOut BehaviorFoundationPolicy::step(const Eigen::Ve
                                                                  ComponentMap components,
                                                                  bool apply_grace_gate,
                                                                  int grace_remaining) {
+  auto logger = rclcpp::get_logger("BehaviorFoundationPolicy");
   if (!residual_session_) {
     throw std::runtime_error("BehaviorFoundationPolicy: residual session not initialised.");
   }
@@ -426,6 +473,45 @@ BehaviorFoundationPolicy::StepOut BehaviorFoundationPolicy::step(const Eigen::Ve
     out.residual_norm = Eigen::VectorXf::Zero(1);
   }
   out.mu_p = mu_prior;
+
+  if (diagnostic_counter_ < 5) {
+    RCLCPP_INFO(logger,
+                "[bfm] diag[%d] obs -> %s | %s (||sp_real||=%.3f ||sg_masked||=%.3f)",
+                diagnostic_counter_,
+                vectorStats("raw", residual_obs).c_str(),
+                vectorStats("norm", normalized_obs).c_str(),
+                sp_real.norm(),
+                sg_masked.norm());
+    const Eigen::VectorXf scaled = blended.cwiseProduct(actionScale_.cast<float>());
+    RCLCPP_INFO(logger,
+                "[bfm] diag[%d] actions -> %s | %s | %s | %s (grace_remaining=%d)",
+                diagnostic_counter_,
+                vectorStats("base", base_action).c_str(),
+                vectorStats("residual", residual_clipped).c_str(),
+                vectorStats("blended", blended).c_str(),
+                vectorStats("scaled", scaled).c_str(),
+                grace_remaining);
+    const auto& defaults = defaultJointPositions_;
+    if (defaults.size() == blended.size()) {
+      Eigen::VectorXf target_vec = Eigen::VectorXf::Zero(blended.size());
+      for (Eigen::Index i = 0; i < blended.size(); ++i) {
+        const double def = defaults[static_cast<Eigen::Index>(i)];
+        const double scale = i < actionScale_.size() ? actionScale_[i] : 1.0;
+        target_vec[i] = static_cast<float>(def + scale * blended[i]);
+      }
+      RCLCPP_INFO(logger,
+                  "[bfm] diag[%d] q_target -> %s",
+                  diagnostic_counter_,
+                  vectorStats("target", target_vec).c_str());
+    }
+    ++diagnostic_counter_;
+  } else if (debug_dump_ && debug_counter_ < 5) {
+    RCLCPP_INFO(logger,
+                "[debug] actions -> %s | %s | %s",
+                vectorStats("base", base_action).c_str(),
+                vectorStats("residual", residual_clipped).c_str(),
+                vectorStats("blended", blended).c_str());
+  }
 
   ++time_step_counter_;
   return out;
@@ -710,6 +796,132 @@ Eigen::VectorXf BehaviorFoundationPolicy::assembleBaseObservation(const Eigen::V
     obs.segment(offset, actionCopy) = last_action_.head(actionCopy).cast<float>();
   }
   return obs;
+}
+
+std::vector<double> BehaviorFoundationPolicy::parseCsvDoubles(const std::string& csv) {
+  std::vector<double> values;
+  std::stringstream ss(csv);
+  std::string token;
+  while (std::getline(ss, token, ',')) {
+    if (token.empty()) {
+      continue;
+    }
+    try {
+      values.push_back(std::stod(token));
+    } catch (const std::exception&) {
+      // skip malformed entries
+    }
+  }
+  return values;
+}
+
+std::vector<std::string> BehaviorFoundationPolicy::parseCsvStrings(const std::string& csv) {
+  std::vector<std::string> values;
+  std::stringstream ss(csv);
+  std::string token;
+  while (std::getline(ss, token, ',')) {
+    if (token.empty()) {
+      continue;
+    }
+    // trim whitespace
+    const auto start = token.find_first_not_of(" \t");
+    const auto end = token.find_last_not_of(" \t");
+    if (start == std::string::npos) {
+      continue;
+    }
+    values.emplace_back(token.substr(start, end - start + 1));
+  }
+  return values;
+}
+
+void BehaviorFoundationPolicy::loadOnnxMetadata() {
+  if (!residual_session_) {
+    return;
+  }
+
+  auto logger = rclcpp::get_logger("BehaviorFoundationPolicy");
+  try {
+    Ort::AllocatorWithDefaultOptions allocator;
+    const Ort::ModelMetadata metadata = residual_session_->GetModelMetadata();
+
+    const auto fetch = [&](const std::string& key) -> std::string {
+      Ort::AllocatedStringPtr value_ptr = metadata.LookupCustomMetadataMapAllocated(key.c_str(), allocator);
+      if (!value_ptr) {
+        return {};
+      }
+      return std::string(value_ptr.get());
+    };
+
+    const std::string action_scale_csv = fetch("action_scale");
+    if (!action_scale_csv.empty()) {
+      const auto parsed = parseCsvDoubles(action_scale_csv);
+      if (!parsed.empty()) {
+        actionScale_ = vector_t::Zero(parsed.size());
+        for (Eigen::Index i = 0; i < static_cast<Eigen::Index>(parsed.size()); ++i) {
+          actionScale_[i] = parsed[static_cast<size_t>(i)];
+        }
+      }
+    }
+
+    const std::string default_pos_csv = fetch("default_joint_pos");
+    if (!default_pos_csv.empty()) {
+      const auto parsed = parseCsvDoubles(default_pos_csv);
+      if (!parsed.empty()) {
+        defaultJointPositions_ = vector_t::Zero(parsed.size());
+        for (Eigen::Index i = 0; i < static_cast<Eigen::Index>(parsed.size()); ++i) {
+          defaultJointPositions_[i] = parsed[static_cast<size_t>(i)];
+        }
+      }
+    }
+
+    const std::string stiffness_csv = fetch("joint_stiffness");
+    if (!stiffness_csv.empty()) {
+      const auto parsed = parseCsvDoubles(stiffness_csv);
+      if (!parsed.empty()) {
+        jointStiffness_ = vector_t::Zero(parsed.size());
+        for (Eigen::Index i = 0; i < static_cast<Eigen::Index>(parsed.size()); ++i) {
+          jointStiffness_[i] = parsed[static_cast<size_t>(i)];
+        }
+      }
+    }
+
+    const std::string damping_csv = fetch("joint_damping");
+    if (!damping_csv.empty()) {
+      const auto parsed = parseCsvDoubles(damping_csv);
+      if (!parsed.empty()) {
+        jointDamping_ = vector_t::Zero(parsed.size());
+        for (Eigen::Index i = 0; i < static_cast<Eigen::Index>(parsed.size()); ++i) {
+          jointDamping_[i] = parsed[static_cast<size_t>(i)];
+        }
+      }
+    }
+
+    const std::string joint_names_csv = fetch("joint_names");
+    if (!joint_names_csv.empty()) {
+      jointNames_ = parseCsvStrings(joint_names_csv);
+    }
+
+    if (!jointNames_.empty()) {
+      RCLCPP_INFO(logger,
+                  "[bfm] joint metadata (%zu joints) first='%s' last='%s'",
+                  jointNames_.size(),
+                  jointNames_.front().c_str(),
+                  jointNames_.back().c_str());
+    }
+    if (actionScale_.size() > 0) {
+      RCLCPP_INFO(logger,
+                  "[bfm] action scale loaded (%ld entries) avg=%.3f",
+                  static_cast<long>(actionScale_.size()),
+                  actionScale_.sum() / static_cast<double>(actionScale_.size()));
+    }
+    if (defaultJointPositions_.size() > 0) {
+      RCLCPP_INFO(logger,
+                  "[bfm] default joint pose loaded (%ld entries)",
+                  static_cast<long>(defaultJointPositions_.size()));
+    }
+  } catch (const Ort::Exception& e) {
+    RCLCPP_WARN(logger, "[bfm] Failed to read ONNX metadata: %s", e.what());
+  }
 }
 
 }  // namespace legged::bfm
