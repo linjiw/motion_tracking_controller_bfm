@@ -1,0 +1,223 @@
+{
+  "action_dim": 29,
+  "alpha": 0.1,
+  "component_slices": {
+    "base_action": [
+      1878,
+      1907
+    ],
+    "base_ang_vel": [
+      1944,
+      1947
+    ],
+    "base_lin_vel": [
+      1941,
+      1944
+    ],
+    "base_obs": [
+      0,
+      96
+    ],
+    "dir_b": [
+      1937,
+      1939
+    ],
+    "mu_p": [
+      1814,
+      1878
+    ],
+    "residual": [
+      1907,
+      1936
+    ],
+    "residual_norm": [
+      1936,
+      1937
+    ],
+    "sg_real_masked": [
+      1725,
+      1814
+    ],
+    "sp_real": [
+      96,
+      1725
+    ],
+    "speed": [
+      1939,
+      1940
+    ],
+    "yaw_rate": [
+      1940,
+      1941
+    ]
+  },
+  "control_mode": "velocity_only",
+  "dim_base_obs": 96,
+  "dim_goal_unified": 89,
+  "dim_obs": 1947,
+  "dim_sp_real": 1629,
+  "goal_source": "speed",
+  "history_length": 25,
+  "latent_dim": 64,
+  "obs_components": [
+    "base",
+    "bfm_context",
+    "goal",
+    "base_action",
+    "residual",
+    "commands",
+    "base_vels"
+  ],
+  "command_names": [
+    "speed"
+  ],
+  "observation_names": [
+    "base_lin_vel",
+    "base_ang_vel",
+    "joint_pos",
+    "joint_vel",
+    "actions",
+    "speed_goal",
+    "residual_observation"
+  ],
+  "obs_norm_file": "deploy_obs_norm.npz",
+  "policy_network": {
+    "activation": "elu",
+    "actor_hidden_dims": [
+      1024,
+      512,
+      256
+    ],
+    "critic_hidden_dims": [
+      1024,
+      512,
+      256
+    ]
+  },
+  "residual_dim": 29,
+  "residual_mode": "blend",
+  "speed_command": {
+    "align_heading": true,
+    "debug_vis": true,
+    "direction_mode": "fixed_forward",
+    "enable_yaw_command": false,
+    "global_step": 912024.0,
+    "grace_steps": 10.0,
+    "speed_range": [
+      1.0,
+      4.5
+    ],
+    "yaw_align_damping": 0.2,
+    "yaw_align_gain": 3.0,
+    "yaw_align_speed_threshold": 0.2,
+    "yaw_rate_limit": 1.5,
+    "yaw_rate_range": [
+      -0.6,
+      0.6
+    ],
+    "yaw_rate_std": 0.0
+  },
+  "state_specs": {
+    "dim_gravity": 3,
+    "dim_joint_pos": 29,
+    "dim_joint_vel": 29,
+    "dim_last_action": 29,
+    "dim_per_timestep": 64,
+    "dim_real_total": 1629,
+    "dim_root_ang_vel": 3,
+    "history_length": 25
+  },
+  "joint_names": [
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_hip_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_hip_pitch_joint",
+    "right_hip_roll_joint",
+    "right_hip_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "waist_yaw_joint",
+    "waist_roll_joint",
+    "waist_pitch_joint",
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_roll_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_roll_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_yaw_joint"
+  ],
+  "kp": [
+    350.0,
+    200.0,
+    200.0,
+    300.0,
+    300.0,
+    150.0,
+    350.0,
+    200.0,
+    200.0,
+    300.0,
+    300.0,
+    150.0,
+    200.0,
+    200.0,
+    200.0,
+    40.0,
+    40.0,
+    40.0,
+    40.0,
+    40.0,
+    40.0,
+    40.0,
+    40.0,
+    40.0,
+    40.0,
+    40.0,
+    40.0,
+    40.0,
+    40.0
+  ],
+  "kd": [
+    5.0,
+    5.0,
+    5.0,
+    10.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    10.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    5.0,
+    3.0,
+    3.0,
+    3.0,
+    3.0,
+    3.0,
+    3.0,
+    3.0,
+    3.0,
+    3.0,
+    3.0,
+    3.0,
+    3.0,
+    3.0,
+    3.0
+  ]
+}
